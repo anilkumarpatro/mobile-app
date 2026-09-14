@@ -22,7 +22,7 @@ on:
 jobs:
   build-simulator:
     name: Build iOS (Simulator)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
@@ -38,10 +38,16 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
       - name: Install CocoaPods
         run: |
           cd ios
-          pod install --repo-update
+          bundle exec pod install
 
       - name: Bundle JavaScript (Release)
         run: |
@@ -78,7 +84,7 @@ jobs:
 
   build-device-ipa:
     name: Build iOS IPA (Device)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_ipa == true }}
     needs: build-simulator
@@ -96,10 +102,16 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
       - name: Install CocoaPods
         run: |
           cd ios
-          pod install --repo-update
+          bundle exec pod install
 
       - name: Import signing certificate
         env:

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The MEDIQ backend is served over plain HTTP. Release builds block cleartext by default, and
+  the React Native Gradle plugin forces usesCleartextTraffic="false" for the release build type
+  in finalizeDsl, so that attribute cannot be overridden from build.gradle. A network security
+  config takes precedence over it, and scopes the exception to just the API host.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">66.116.246.58</domain>
+    </domain-config>
+</network-security-config>

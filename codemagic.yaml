@@ -1,0 +1,58 @@
+# Codemagic cloud Mac build for MEDIQ Customer iOS app.
+# Connect this repo at https://codemagic.io and add Apple signing credentials
+# under Team settings > Code signing identities (or in-app Apple Developer Portal integration).
+
+workflows:
+  mediq-ios:
+    name: MEDIQ iOS
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.psystemcustomermobile
+      vars:
+        XCODE_WORKSPACE: ios/PsystemCustomerMobile.xcworkspace
+        XCODE_SCHEME: PsystemCustomerMobile
+        BUNDLE_ID: com.psystemcustomermobile
+      node: 22
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+        - pattern: master
+          include: true
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+      - name: Bundle JavaScript
+        script: |
+          npx react-native bundle \
+            --platform ios \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output ios/main.jsbundle \
+            --assets-dest ios
+      - name: Build iOS
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      email:
+        recipients:
+          - user@example.com
+        notify:
+          success: true
+          failure: true

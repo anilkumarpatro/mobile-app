@@ -1,0 +1,164 @@
+name: iOS Cloud Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_ipa:
+        description: Build signed IPA for device (requires Apple signing secrets)
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'ios/**'
+      - 'src/**'
+      - 'App.tsx'
+      - 'index.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-build.yml'
+
+jobs:
+  build-simulator:
+    name: Build iOS (Simulator)
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Bundle JavaScript (Release)
+        run: |
+          npx react-native bundle \
+            --platform ios \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output ios/main.jsbundle \
+            --assets-dest ios
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild \
+            -workspace ios/PsystemCustomerMobile.xcworkspace \
+            -scheme PsystemCustomerMobile \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package simulator app
+        run: |
+          APP_PATH="ios/build/Build/Products/Release-iphonesimulator/PsystemCustomerMobile.app"
+          mkdir -p ios/dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" ios/dist/MEDIQ-Simulator.zip
+
+      - name: Upload simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediq-ios-simulator
+          path: ios/dist/MEDIQ-Simulator.zip
+          retention-days: 14
+
+  build-device-ipa:
+    name: Build iOS IPA (Device)
+    runs-on: macos-14
+    timeout-minutes: 60
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_ipa == true }}
+    needs: build-simulator
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Import signing certificate
+        env:
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$IOS_DISTRIBUTION_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Install provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo -n "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Bundle JavaScript (Release)
+        run: |
+          npx react-native bundle \
+            --platform ios \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output ios/main.jsbundle \
+            --assets-dest ios
+
+      - name: Archive iOS app
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          xcodebuild \
+            -workspace ios/PsystemCustomerMobile.xcworkspace \
+            -scheme PsystemCustomerMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath ios/build/MEDIQ.xcarchive \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            archive
+
+      - name: Export IPA
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath ios/build/MEDIQ.xcarchive \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath ios/dist
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediq-ios-ipa
+          path: ios/dist/*.ipa
+          retention-days: 14
